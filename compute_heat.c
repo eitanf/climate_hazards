@@ -19,30 +19,29 @@
 
 // Lookup table: Each row represents increasing amount of humidity, from 5% to
 // 100% in 5% increments. Each column represents the minimum temperature to
-// reach the next heat index. So g_thresholds[3,2] == 35 means that for a
-// relative humidity of 15% and a temperature between 35 deg C and < 42.2C,
-// The heat index is at level 2 of [0:4].
+// reach the next heat index.
 const float g_thresholds[NPERCENTILES][NINDICES] = {
- {  28.89, 36.67, 45.56, 999.9 },  // 5% humidity
- {  28.33, 35.56, 43.89, 999.9 },  // 10%
- {  27.78, 35.00, 42.22, 51.67 },  // 15%
- {  27.78, 34.44, 41.11, 49.44 },  // 20%
- {  27.78, 33.89, 40.00, 47.22 },  // 25%
- {  27.22, 33.33, 38.89, 45.56 },  // 30%
- {  26.67, 32.78, 37.78, 43.89 },  // 35%
- {  26.67, 32.22, 37.22, 42.78 },  // 40%
- {  26.67, 31.67, 36.11, 41.11 },  // 45%
- {  26.67, 31.11, 35.00, 40.00 },  // 50%
- {  26.67, 30.56, 34.44, 54.44 },  // 55%
- {  26.67, 30.00, 33.89, 38.33 },  // 60%
- {  26.67, 29.44, 32.78, 37.22 },  // 65%
- {  26.67, 28.89, 32.22, 36.11 },  // 70%
- {  26.67, 28.89, 31.67, 35.56 },  // 75%
- {  26.67, 28.33, 31.11, 35.00 },  // 80%
- {  26.67, 27.78, 30.56, 33.89 },  // 85%
- {  26.67, 27.78, 30.00, 33.33 },  // 90%
- {  26.67, 27.78, 30.00, 32.78 },  // 95%
- {  26.67, 27.22, 29.44, 32.22 }   // 100%
+ { 84, 98, 114, 999 },  // 5% humidity
+ { 83, 96, 111, 999 },  // 10%
+ { 82, 95, 108, 125 },  // 15%
+ { 82, 94, 106, 121 },  // 20%
+ { 82, 93, 104, 117 },  // 25%
+ { 81, 92, 102, 114 },  // 30%
+ { 80, 91, 100, 111 },  // 35%
+ { 80, 90, 99, 109 },   // 40%
+ { 80, 89, 97, 106 },   // 45%
+ { 80, 88, 95, 104 },   // 50%
+ { 80, 87, 94, 102 },   // 55%
+ { 80, 86, 93, 101 },   // 60%
+ { 80, 85, 91, 99 },    // 65%
+ { 80, 84, 90, 97 },    // 70%
+ { 80, 84, 89, 96 },    // 75%
+ { 80, 83, 88, 95 },    // 80%
+ { 80, 82, 87, 93 },    // 85%
+ { 80, 82, 86, 92 },    // 90%
+ { 80, 82, 86, 91 },    // 95%
+ { 80, 81, 85, 90 }     // 100%
+
 };
 
 int compute_heat_index(float humidity, float temp)
@@ -55,6 +54,9 @@ int compute_heat_index(float humidity, float temp)
   // to the nearest 5%. The first index (row = 0) is 5%.
   int row = (int)(0.5 + humidity * NPERCENTILES) - 1;
   if (row < 0) row = 0;  // For those humidities below 2.5%
+
+  // For temperature, we just convert from C to F and round:
+  temp = (int)(temp * 9. / 5. + 32 + 0.5);
 
   assert(row < NPERCENTILES);
 
