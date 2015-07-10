@@ -1,5 +1,7 @@
 # Compute total water runoff in future (modeled) periods based on 95th-percentile data modeled on the past.
 
+library(dplyr)
+
 root.dir <- "/data/runoff"
 
 models <- c("access1-0_rcp85_r1i1p1", "bcc-csm1-1-m_rcp85_r1i1p1", "bcc-csm1-1_rcp85_r1i1p1", "canesm2_rcp85_r1i1p1",
@@ -63,13 +65,44 @@ total_runoff <- function(model) {
   save.21$total_runoff <- excess.21
   save.41 <- coords
   save.41$total_runoff <- excess.41
-  write.csv(save.91, file = paste0(root.dir, "/tmp_save_excess_runoff.",model,".1991.csv"), row.names = FALSE)
-  write.csv(save.21, file = paste0(root.dir, "/tmp_save_excess_runoff.",model,".2021.csv"), row.names = FALSE)
-  write.csv(save.41, file = paste0(root.dir, "/tmp_save_excess_runoff.",model,".2041.csv"), row.names = FALSE)
+  write.csv(save.91, file = paste0(root.dir, "/tmp_save_excess_runoff.", model, ".1991.csv"), row.names = FALSE)
+  write.csv(save.21, file = paste0(root.dir, "/tmp_save_excess_runoff.", model, ".2021.csv"), row.names = FALSE)
+  write.csv(save.41, file = paste0(root.dir, "/tmp_save_excess_runoff.", model, ".2041.csv"), row.names = FALSE)
 
   print(paste("Done at time", Sys.time()))
 }
 
+# Temporary crutch to move from a bad grid merge to a better one
+replace.grid.data <- function(grid, model) {
+  for (yr in c(1991, 2021, 2041)) {
+    fn <- paste0(root.dir, "/tmp_save_excess_runoff.", model, ".", yr, ".csv")
+    orig <- read.csv(fn)
+    merged <- merge(grid[,c(1,2,3,7,8)], orig[,c(1,2,6)])
+    merged$state = substr(merged$GEOID, 1, 2)
+    write.csv(merged, file = fn, row.names = FALSE)
+  }
+}
+
+average.by.watershed.state <- function(model) {
+  for (year in c(1991, 2021, 2041)) {
+    print (paste("Processing model:", model, "year:", year))
+    data <- read.csv(paste0(root.dir, "/tmp_save_excess_runoff.", model, ".", year, ".csv"))
+    by.state.huc <- group_by(data, HUC8, state) %>% summarise(mean.runoff = mean(total_runoff) / 20) # Twenty years
+    names(by.state.huc) <- c("HUC8", "State", paste0("epoch-", year))
+    if (year == 1991) {
+      mdata <- by.state.huc
+    } else {
+      mdata <- merge(mdata, by.state.huc)
+    }
+  }
+  return (mdata)
+}
+
 for (model in models) {
   total_runoff(model)
+}
+
+for (model in models) {
+  mdata <- average.by.watershed.state(model)
+  write.csv(mdata, paste0(root.dir, "/annual.means.", model, ".csv", row.names = FALSE))
 }
