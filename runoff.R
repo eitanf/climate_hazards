@@ -78,7 +78,7 @@ replace.grid.data <- function(grid, model) {
     fn <- paste0(root.dir, "/tmp_save_excess_runoff.", model, ".", yr, ".csv")
     orig <- read.csv(fn)
     merged <- merge(grid[,c(1,2,3,7,8)], orig[,c(1,2,6)])
-    merged$state = substr(merged$GEOID, 1, 2)
+    merged$state = as.integer(merged$GEOID / 1000)
     write.csv(merged, file = fn, row.names = FALSE)
   }
 }
@@ -98,11 +98,54 @@ average.by.watershed.state <- function(model) {
   return (mdata)
 }
 
+
+plot.runoff.map <- function(year) {
+  library(ggplot2)
+  library(sp)
+  library(maptools)
+  library(plyr)
+
+  runoff <- read.csv(paste0(root.dir, "/median_excess_runoff.", year, ".csv"))
+  map.counties <- map_data("county")
+  map.states <- map_data("state")
+
+  counties <- map('county', fill = TRUE, col = "transparent", plot = FALSE)
+  IDs <- sapply(strsplit(counties$names, ":"), function(x) x[1])
+  counties_sp <- map2SpatialPolygons(counties, IDs = IDs,
+                                     proj4string = CRS("+proj=longlat +datum=WGS84"))
+  pointsSP <- SpatialPoints(as.data.frame(runoff[,c('LON','LAT')]),
+                            proj4string = CRS("+proj=longlat +datum=WGS84"))
+  indices <- over(pointsSP, counties_sp)
+
+  county.names <- sapply(counties_sp@polygons, function(x) x@ID)
+  runoff$county<-county.names[indices]
+  mapcounties$county <- with(mapcounties, paste(region, subregion, sep = ","))
+  runoff.mean <- ddply(runoff, c("county"), summarize, means = mean(median.excess.runoff))
+  runoff.un <- runoff[!duplicated(runoff[c("county")]),]
+  runoff.final <- merge(runoff.mean, runoff.un, by = 'county')
+  breaks <- c(1, 100,500,1000,2000,5000,10000)
+  runoff.final$colorBuckets <- as.factor(as.numeric(cut(runoff.mean$means, breaks)))
+  mergedata <- merge(mapcounties, runoff.final, by = "county")
+  mergedata <- mergedata[order(mergedata$means),]
+
+  pdf(paste0(root.dir, "/county-excess-runoff-", year, ".pdf"))
+  ggplot(mergedata, aes(long, lat, group = group)) +
+    geom_polygon(aes(fill = colorBuckets)) +
+    theme(panel.background = element_rect(fill = "white")) +
+    scale_fill_brewer(palette="PuRd", labels = breaks, name = "Excess runoff (mm/m^2)") +
+    coord_map(project="globular") +
+    ggtitle(paste0("Median excess runoff ", year, "-", year + 19, ", averaged per county")) +
+    geom_path(data = map.states, colour = "black", size = .3) +
+    geom_path(data = mapcounties, colour = "white", size = .5, alpha = .1)
+  dev.off()
+}
+
+
 for (model in models) {
   total_runoff(model)
 }
 
 for (model in models) {
   mdata <- average.by.watershed.state(model)
-  write.csv(mdata, paste0(root.dir, "/annual.means.", model, ".csv", row.names = FALSE))
+  write.csv(mdata, paste0(root.dir, "/annual.means.", model, ".csv"), row.names = FALSE)
 }
