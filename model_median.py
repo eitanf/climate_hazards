@@ -37,7 +37,7 @@ while True:
     # Output fields that precede index:
     assert all(lines[x][0] == lines[0][0] for x in range(1, index))
     for i in range(0, index):
-        sys.stdout.write(lines[0][i])
+        sys.stdout.write('"' + lines[0][i] + '"')
         sys.stdout.write(',')
 
     data = [line[index] for line in lines]

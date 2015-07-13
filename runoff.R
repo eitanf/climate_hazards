@@ -140,12 +140,38 @@ plot.runoff.map <- function(year) {
   dev.off()
 }
 
+# For each state, aggregate excess runoff by watershed, and average weighted by population
+compute.state.runoff <- function() {
+  setwd(root.dir)
+  watersheds <- read.csv("huc8pops.csv")
+  watersheds <- rename(watersheds, state = STFIPS)
 
-for (model in models) {
-  total_runoff(model)
+  medians.91 <- read.csv("median_excess_runoff.1991.csv")
+  medians.21 <- read.csv("median_excess_runoff.2021.csv")
+  medians.41 <- read.csv("median_excess_runoff.2041.csv")
+
+  runoff.91 <- group_by(medians.91, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
+  runoff.21 <- group_by(medians.21, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
+  runoff.41 <- group_by(medians.41, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
+
+  merged.91 <- merge(watersheds, runoff.91)
+  merged.21 <- merge(watersheds, runoff.21)
+  merged.41 <- merge(watersheds, runoff.41)
+
+  agg.91 <- group_by(merged.91, state) %>% summarise(wrunoff = sum(annual.mean.runoff * POP), pop = sum(POP), n = n())
+  agg.21 <- group_by(merged.21, state) %>% summarise(wrunoff = sum(annual.mean.runoff * POP), pop = sum(POP), n = n())
+  agg.41 <- group_by(merged.41, state) %>% summarise(wrunoff = sum(annual.mean.runoff * POP), pop = sum(POP), n = n())
+
+  ret <- data.frame(state = agg.91$state,
+                    weighted.runoff.1991 = agg.91$wrunoff / agg.91$pop,
+                    weighted.runoff.2021 = agg.21$wrunoff / agg.21$pop,
+                    weighted.runoff.2041 = agg.41$wrunoff / agg.41$pop
+  )
+
+  write.csv(ret, "weighted_runoff_summary.csv", row.names = FALSE)
+  ret
 }
 
 for (model in models) {
-  mdata <- average.by.watershed.state(model)
-  write.csv(mdata, paste0(root.dir, "/annual.means.", model, ".csv"), row.names = FALSE)
+  total_runoff(model)
 }
