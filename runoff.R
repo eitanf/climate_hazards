@@ -83,6 +83,8 @@ replace.grid.data <- function(grid, model) {
   }
 }
 
+
+# (Obsolote) function to aggregate data by watershed and state, ignoring population
 average.by.watershed.state <- function(model) {
   for (year in c(1991, 2021, 2041)) {
     print (paste("Processing model:", model, "year:", year))
@@ -141,18 +143,15 @@ plot.runoff.map <- function(year) {
 }
 
 # For each state, aggregate excess runoff by watershed, and average weighted by population
-compute.state.runoff <- function() {
+compute.state.runoff <- function(watersheds, model) {
   setwd(root.dir)
-  watersheds <- read.csv("huc8pops.csv")
-  watersheds <- rename(watersheds, state = STFIPS)
+  model.91 <- read.csv(paste0("tmp_save_excess_runoff.", model, ".1991.csv"))
+  model.21 <- read.csv(paste0("tmp_save_excess_runoff.", model, ".2021.csv"))
+  model.41 <- read.csv(paste0("tmp_save_excess_runoff.", model, ".2041.csv"))
 
-  medians.91 <- read.csv("median_excess_runoff.1991.csv")
-  medians.21 <- read.csv("median_excess_runoff.2021.csv")
-  medians.41 <- read.csv("median_excess_runoff.2041.csv")
-
-  runoff.91 <- group_by(medians.91, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
-  runoff.21 <- group_by(medians.21, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
-  runoff.41 <- group_by(medians.41, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
+  runoff.91 <- group_by(model.91, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
+  runoff.21 <- group_by(model.21, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
+  runoff.41 <- group_by(model.41, HUC8, state) %>% summarise(annual.mean.runoff = mean(total_runoff) / 20)
 
   merged.91 <- merge(watersheds, runoff.91)
   merged.21 <- merge(watersheds, runoff.21)
@@ -168,10 +167,64 @@ compute.state.runoff <- function() {
                     weighted.runoff.2041 = agg.41$wrunoff / agg.41$pop
   )
 
-  write.csv(ret, "weighted_runoff_summary.csv", row.names = FALSE)
+  write.csv(ret, paste0("weighted_runoff_summary.", model, ".csv"), row.names = FALSE)
   ret
+}
+
+# For a given list of data for one state (each list item containing aggregated
+# excess runoff for one model and three epochs), compute the median change from
+# the 1991 epoch to the 2021 and 2041. Median change is only computed if 20 or
+# more of the models agree on the direction (sign) of the change. Otherwise,
+# it is defined NA.
+median.change <- function(state.data) {
+  ratios <- sapply(state.data, function (row)
+    (row$weighted.runoff.2021 - row$weighted.runoff.1991) / row$weighted.runoff.1991)
+  if (sum(ratios > 0) >= 20) {
+    med.21 <-  median(ratios[ratios > 0])
+  } else if (sum(ratios < 0) >= 20) {
+    med.21 <-  median(ratios[ratios < 0])
+  } else {
+    med.21 <- NA
+  }
+
+  ratios <- sapply(state.data, function (row)
+    (row$weighted.runoff.2041 - row$weighted.runoff.1991) / row$weighted.runoff.1991)
+  if (sum(ratios > 0) >= 20) {
+    med.41 <-  median(ratios[ratios > 0])
+  } else if (sum(ratios < 0) >= 20) {
+    med.41 <-  median(ratios[ratios < 0])
+  } else {
+    med.41 <- NA
+  }
+
+  return(c(round(state.data[[1]]$state, 0), round(med.21, 4), round(med.41, 4)))
+}
+
+# For all states, compute the median change from 2021 to 1991 and 1991 to 2041,
+# if a large majority of models agree on the sign of the change.
+median.runoff.agreement <- function(models) {
+  files <- lapply(models, function(m) paste0("weighted_runoff_summary.", m, ".csv"))
+  data <- lapply(files, read.csv)
+  ret <- data.frame(state = numeric(), median.2021 = numeric(), median.2041 = numeric())
+
+  for (i in 1:nrow(data[[1]])) {
+    ret <- rbind(ret, median.change(lapply(data, "[", i,)))
+  }
+
+  names(ret) = c("state", "median.change.ratio.2021", "median.change.ratio.2041")
+  return(ret)
 }
 
 for (model in models) {
   total_runoff(model)
 }
+
+watersheds <- read.csv(paste0(root.dir, "/huc8pops.csv"))
+watersheds <- rename(watersheds, state = STFIPS)
+
+for (model in models) {
+  compute.state.runoff(watersheds, model)
+}
+
+final.results <- median.runoff.agreement(models)
+write.csv(final.results, "weighted_runoff_summary.csv", row.names = FALSE)
