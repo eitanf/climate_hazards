@@ -78,39 +78,40 @@ load.data <- function(grid, model, mtype) {
 # "Near-real time mapping of Keetch-Byram drought index in the south-eastern United States",
 # Int. J. of Wildland Fire, 2002 (11), pp. 281--289
 compute.KBDI.str <- '
-NumericVector fast_kbdi(NumericVector daily_precip, NumericVector daily_tmax, int kbdi0_index) {
-  auto sz = daily_precip.size();
-  NumericVector ret(sz);
+NumericMatrix fast_kbdi(const NumericMatrix& daily_precip, const NumericMatrix& daily_tmax, const NumericVector& kbdi0_index) {
+  const auto nr = daily_precip.nrow();
+  const auto nc = daily_precip.ncol();
+  NumericMatrix ret(daily_precip.nrow(), daily_precip.ncol());
 
-  // Start by resetting KBDI for all the days up to kbdi0_index with 0:
-  int i;
-  for (i = 0; i < kbdi0_index; ++i) {
-    ret[i] = 0;
-  }
+  for (auto j = 0; j < nr; ++j) {
+    const auto first = kbdi0_index[j];  // Start computing KBDI here. Remember C++ is 0-index based!
+    double Q = 0.;     // Latest KBDI value
+    double cumP = 1000.;  // Cummulative precipitation up to now during wet spell
 
-  double Q = 0.;   // Last KBDI value
-  double cumP = 1000.;  // Cummulative precipitation up to now during wet spell
+    // Compute mean annual preciptation:
+    double R = 0.;
+    for (auto i = first; i < nc; ++i)  R = R + daily_precip(j, i);
+    R = 365 * R / (nc - first);      // Divide by no. of years.
 
-  const double R = 365. / (sz - kbdi0_index) *  // Mean annual precipitation
-      std::accumulate(daily_precip.begin() + kbdi0_index, daily_precip.end(), 0.);
+    // Now, for each subsequent day, compute KBDI as a function of the previous days KBDI:
+    for (auto i = first; i < nc; ++i) {
+      const auto temp = daily_tmax(j, i);
+      const auto p = daily_precip(j, i);
 
-  // Now, for each subsequent day, compute KBDI as a function of the previous days KBDI:
-  for (; i < sz; ++i) {
-    double const temp = daily_tmax[i] * 9./5. + 32.;  // Convert to F
+      // Change in saturation from yesterday, if temperature is high enough:
+      const auto dQ = (temp <= 50.)?
+          0.
+        : 0.001 * (800 - Q) * (0.968 * exp(0.0486 * temp) - 8.3) /
+          (1. + 10.88 * exp(-0.0441 * R));
 
-    // Change in saturation from yesterday, if temperature is high enough:
-    const double dQ = (temp <= 50)? 0 :
-      0.001 * (800 - Q) * (0.968 * exp(0.0486 * temp) - 8.3) /
-      (1. + 10.88 * exp(-0.0441 * R));
-    
-    // Change in precipitation (adjusted downward by 0.2in after a dry period of < 0.2in):
-    cumP = (daily_precip[i] > 0.)? cumP + daily_precip[i] : 0.;
-    const double dP = (cumP - daily_precip[i] > 0.2)?
-        daily_precip[i]   // We have already accumulated more than 0.2in before today in spell
-      : std::max(cumP - 0.2, 0.);  // First time possibly passing 0.2in, so substract it
+      // Change in precipitation (adjusted downward by 0.2in after a dry period of < 0.2in):
+      cumP = (p > 0.)? cumP + p : 0.;
+      // Have we already accumulated more than 0.2in before today in spell? if not, substract it
+      const auto dP = 100. * ((cumP - p > 0.2)? p : std::max(cumP - 0.2, 0.));
 
-    Q += dQ - dP;
-    ret[i] = Q;
+      Q = std::max(Q + dQ - dP, 0.);
+      ret(j, i) = Q;
+    }
   }
 
   return (ret);
@@ -119,20 +120,64 @@ NumericVector fast_kbdi(NumericVector daily_precip, NumericVector daily_tmax, in
 
 cppFunction(compute.KBDI.str, plugins = c("cpp11"))
 
+# An R implementation of fast_kbdi, for debugging purposes
+compute.kbdi <- function(daily.precip, daily.tmax, kbdi0.index) {
+  nr = nrow(daily.precip)
+  nc = ncol(daily.precip)
+  ret = matrix(rep(0, nr * nc), nrow = nr, ncol = nc)
 
+  for (j in 1:nr) {
+    first = kbdi0.index[j] + 1  # Start computing KBDI here.
+    Q = 0.   # Latest KBDI value
+    cumP = 1000.  # Cummulative precipitation up to now during wet spell
 
-model <- models[1]
-print(paste("Reading inputs for model", model, "at time", Sys.time()))
-tmax <- load.data(grid, model, "tasmax")
-precip <- load.data(grid, model, "pr")
-baseline.start <- which(names(precip) == "01011991") # The time from which we record measurements
-# The last date to consider for KBDI=0 start is the prior date. Compute weekly precip up to then:
-weekly.precip = apply(precip[,5:(baseline.start - 1)], 1, fast_weekly_precip)
-kbdi0 <- apply(weekly.precip, 2, find.KBDI.start.index)
+    # Compute mean annual preciptation:
+    R = 0.
+    for (i in first:nc) R = R + daily.precip[j, i]
+    R = 365 * R / (nc - first)      # Divide by no. of years.
 
-row1.p <- as.numeric(precip[1,5:ncol(precip)])
-row1.t <- as.numeric(tmax[1,5:ncol(precip)])
-kbdiv <- fast_kbdi(row1.p, row1.t, kbdi0[1])
+    # Now, for each subsequent day, compute KBDI as a function of the previous days KBDI:
+    for (i in first:nc) {
+      temp = daily.tmax[j, i];
+      #Change in saturation from yesterday, if temperature is high enough:
+      dQ = ifelse(temp <= 50, 0,
+        0.001 * (800 - Q) * (0.968 * exp(0.0486 * temp) - 8.3) /
+        (1. + 10.88 * exp(-0.0441 * R)))
 
-print(paste("Done at", Sys.time()))
+      # Change in precipitation (adjusted downward by 0.2in after a dry period of < 0.2in):
+      p = daily.precip[j, i]
+      cumP = ifelse(p > 0., cumP + p, 0.)
+      # Have we already accumulated more than 0.2in before today in spell? if not, substract it
+      dP = 100. * ifelse(cumP - p > 0.2, p, max(cumP - 0.2, 0.))
 
+      Q = max(Q + dQ - dP, 0.)
+      ret[j, i] = Q
+    }
+  }
+
+  return (ret);
+}
+
+compute.model.KBDI <- function(model) {
+  print(paste("Reading inputs for model", model, "at time", Sys.time()))
+  tmax <- load.data(grid, model, "tasmax")
+  precip <- load.data(grid, model, "pr")
+
+  print(paste("Computing KBDI==0 indices for model", model, "at time", Sys.time()))
+  baseline.start <- which(names(precip) == "01011991") # The time from which we record measurements
+  # The last date to consider for KBDI=0 start is the prior date. Compute weekly precip up to then:
+  weekly.precip = apply(precip[,5:(baseline.start - 1)], 1, fast_weekly_precip)
+  kbdi0 <- apply(weekly.precip, 2, find.KBDI.start.index)
+
+  print(paste("Computing KBDI values for model", model, "at time", Sys.time()))
+  pr <- as.matrix(precip[,5:ncol(precip)]) * 0.0393701  # Convert to inches
+  tm <- as.matrix(tmax[,5:ncol(tmax)]) * 9./5. + 32.    # Convert to F
+  kbdi <- fast_kbdi(pr, tm, kbdi0)
+
+  print(paste("Saving KBDI values for model", model, "at time", Sys.time()))
+  write.csv(cbind(precip[,1:4], kbdi),
+            bzfile(paste0(kbdi.dir, "/kbdi.", model, ".csv.bz2")),
+            row.names = FALSE)
+
+  print(paste("Done at", Sys.time()))
+}
