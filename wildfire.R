@@ -81,7 +81,8 @@ compute.KBDI.str <- '
 NumericMatrix fast_kbdi(const NumericMatrix& daily_precip, const NumericMatrix& daily_tmax, const NumericVector& kbdi0_index) {
   const auto nr = daily_precip.nrow();
   const auto nc = daily_precip.ncol();
-  NumericMatrix ret(daily_precip.nrow(), daily_precip.ncol());
+  NumericMatrix ret(nr, nc);
+  std::fill(ret.begin(), ret.end(), 0.);
 
   for (auto j = 0; j < nr; ++j) {
     const auto first = kbdi0_index[j];  // Start computing KBDI here. Remember C++ is 0-index based!
@@ -108,6 +109,9 @@ NumericMatrix fast_kbdi(const NumericMatrix& daily_precip, const NumericMatrix& 
       cumP = (p > 0.)? cumP + p : 0.;
       // Have we already accumulated more than 0.2in before today in spell? if not, substract it
       const auto dP = 100. * ((cumP - p > 0.2)? p : std::max(cumP - 0.2, 0.));
+
+//      if (i <= first + 10)
+//        Rcpp::Rcout << "j:" << j << "   i:" << i << "   Q:" << Q << "   p:" << p << "   T:" << temp << "   dQ:" << dQ << "   dP:" << dP << std::endl;
 
       Q = std::max(Q + dQ - dP, 0.);
       ret(j, i) = Q;
@@ -150,6 +154,9 @@ compute.kbdi <- function(daily.precip, daily.tmax, kbdi0.index) {
       # Have we already accumulated more than 0.2in before today in spell? if not, substract it
       dP = 100. * ifelse(cumP - p > 0.2, p, max(cumP - 0.2, 0.))
 
+#      if (i <= first + 10)
+#        print(paste("j:", j, "i:", i, "Q:", Q, "p:", p, "T:", temp, "dQ:", dQ, "dP:", dP))
+
       Q = max(Q + dQ - dP, 0.)
       ret[j, i] = Q
     }
@@ -169,15 +176,28 @@ compute.model.KBDI <- function(model) {
   weekly.precip = apply(precip[,5:(baseline.start - 1)], 1, fast_weekly_precip)
   kbdi0 <- apply(weekly.precip, 2, find.KBDI.start.index)
 
+  start.values <- data.frame(LON = precip$LON, LAT = precip$LAT, date = names(precip)[kbdi0 + 4], index = kbdi0,
+                             weekly.precip.in = sapply(1:length(kbdi0), function(i) weekly.precip[kbdi0[i], i]))
+  write.csv(start.values, paste0(wildfire.dir, "/start_at.", model, ".csv"), row.names = FALSE)
+
   print(paste("Computing KBDI values for model", model, "at time", Sys.time()))
   pr <- as.matrix(precip[,5:ncol(precip)]) * 0.0393701  # Convert to inches
   tm <- as.matrix(tmax[,5:ncol(tmax)]) * 9./5. + 32.    # Convert to F
   kbdi <- fast_kbdi(pr, tm, kbdi0)
 
   print(paste("Saving KBDI values for model", model, "at time", Sys.time()))
-  write.csv(cbind(precip[,1:4], kbdi),
-            bzfile(paste0(kbdi.dir, "/kbdi.", model, ".csv.bz2")),
-            row.names = FALSE)
+  kbdi <- cbind(precip[,1:4], kbdi)
+  names(kbdi)[5:ncol(kbdi)] = names(precip)[5:ncol(kbdi)]
+  save(kbdi, file = paste0(wildfire.dir, "/kbdi.", model, ".Rdata"))
 
   print(paste("Done at", Sys.time()))
+}
+
+aggregate.model <- function(model) {
+  print(paste("Reading", model, "at", Sys.time()))
+  load(file = paste0(wildfire.dir, "/kbdi.", model, ".Rdata"))
+  names(kbdi)[5:ncol(kbdi)] = names(precip)[5:ncol(kbdi)]
+  print(paste("Writing at", Sys.time()))
+  save(kbdi, file = paste0(wildfire.dir, "/kbdi.", model, ".Rdata"))
+  gc()
 }
