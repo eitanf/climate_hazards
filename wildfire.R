@@ -193,11 +193,25 @@ compute.model.KBDI <- function(model) {
   print(paste("Done at", Sys.time()))
 }
 
-aggregate.model <- function(model) {
+# For a given model and grid point, this function avearages the KBDI values over three
+# period of 20 years, during June, July, and August only. Returns a dataframe with the
+# three means per grid point, for all grid points.
+aggregate.years <- function(model) {
   print(paste("Reading", model, "at", Sys.time()))
   load(file = paste0(wildfire.dir, "/kbdi.", model, ".Rdata"))
-  names(kbdi)[5:ncol(kbdi)] = names(precip)[5:ncol(kbdi)]
-  print(paste("Writing at", Sys.time()))
-  save(kbdi, file = paste0(wildfire.dir, "/kbdi.", model, ".Rdata"))
-  gc()
+
+  summers.91 = (substr(names(kbdi), 1, 2) >= "06"   & substr(names(kbdi), 1, 2) <= "08" &
+                substr(names(kbdi), 5, 8) >= "1991" & substr(names(kbdi), 5, 8) <= "2010")
+  summers.21 = (substr(names(kbdi), 1, 2) >= "06"   & substr(names(kbdi), 1, 2) <= "08" &
+                substr(names(kbdi), 5, 8) >= "2021" & substr(names(kbdi), 5, 8) <= "2040")
+  summers.41 = (substr(names(kbdi), 1, 2) >= "06"   & substr(names(kbdi), 1, 2) <= "08" &
+                substr(names(kbdi), 5, 8) >= "2041" & substr(names(kbdi), 5, 8) <= "2060")
+
+  means <- data.frame(mean.summers.91 = apply(kbdi[summers.91], 1, mean),
+                      mean.summers.21 = apply(kbdi[summers.21], 1, mean),
+                      mean.summers.41 = apply(kbdi[summers.41], 1, mean))
+
+  ret <- cbind(kbdi[,1:4], means)
+  write.csv(ret, paste0(wildfire.dir, "/summer-means.", model, ".csv"))
+  return(ret)
 }
