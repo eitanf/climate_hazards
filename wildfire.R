@@ -1,7 +1,12 @@
 # Compute wildfire risk based on a KBDI estimate (http://www.srs.fs.usda.gov/pubs/rp/uncaptured/rp_se038.pdf)
 
+library(plyr)
 library(dplyr)
 library(Rcpp)
+library(ggplot2)
+library(sp)
+library(maptools)
+library(maps)
 
 models.dir <- "/data/modeldata"
 wildfire.dir <- "/data/wildfire"
@@ -214,4 +219,71 @@ aggregate.years <- function(model) {
   ret <- cbind(kbdi[,1:4], means)
   write.csv(ret, paste0(wildfire.dir, "/summer-means.", model, ".csv"))
   return(ret)
+}
+
+
+start.date <- function(point.data) {
+  ret <- c(LON = point.data[[1]]$LON,
+           LAT = point.data[[1]]$LAT,
+           median.idx = median(sapply(point.data, function(r) r$index)),
+           min.year = as.integer(min(sapply(point.data, function(r) r$index)) / 365 + 1950))
+
+  return(ret)
+}
+
+# This function computes for each grid point the median date for KBDI=0 start across all
+# the models, the uses this data to plot it as a heatmap overlayed on a US county map.
+plot.start.dates <- function() {
+  files <- lapply(models, function(m) paste0(wildfire.dir, "/start_at.", m, ".csv"))
+  data <- lapply(files, read.csv)
+
+  dates <- data.frame(LON = numeric(), LAT = numeric(), median.idx = integer(), min.year = integer())
+
+  for (i in 1:nrow(data[[1]])) {
+    dates <- rbind(dates, start.date(lapply(data, "[", i,)))
+  }
+  names(dates) = c("LON", "LAT", "median.start.day", "min.year")
+  write.csv(dates, paste0(wildfire.dir, "/start_dates_across_models.csv"), row.names = FALSE)
+
+  # OK, we have the data, let's plot it:
+  dates <- read.csv(paste0(wildfire.dir, "/start_dates_across_models.csv"))
+  map.counties <- map_data("county")
+  map.states <- map_data("state")
+
+  counties <- map('county', fill = TRUE, col = "transparent", plot = FALSE)
+  IDs <- sapply(strsplit(counties$names, ":"), function(x) x[1])
+  counties_sp <- map2SpatialPolygons(counties, IDs = IDs,
+                                     proj4string = CRS("+proj=longlat +datum=WGS84"))
+  pointsSP <- SpatialPoints(as.data.frame(dates[,c('LON','LAT')]),
+                            proj4string = CRS("+proj=longlat +datum=WGS84"))
+  indices <- over(pointsSP, counties_sp)
+  
+  county.names <- sapply(counties_sp@polygons, function(x) x@ID)
+  dates$county <- county.names[indices]
+  mapcounties <- map_data("county")
+  mapstates <- map_data("state")
+  mapcounties$county <- with(mapcounties, paste(region, subregion, sep = ","))
+
+  dates.mean <- ddply(dates, c("county"), summarize, means = mean(median.start.day))
+  dates.min <- ddply(dates, c("county"), summarize, mins = min(min.year))
+  dates.un <- dates[!duplicated(dates[c("county")]),]
+  dates.1 <- merge(dates.mean, dates.un, by = 'county')
+  dates.2 <- merge(dates.min, dates.un, by = 'county')
+
+
+  breaks <- c(1000, 5000, 7500, 10000, 12500, 15000)
+  dates.1$colorBuckets <- as.factor(as.numeric(cut(dates.mean$means, breaks)))
+  mergedata <- merge(mapcounties, dates.1, by = "county")
+  mergedata <- mergedata[order(mergedata$means),]
+
+  pdf(paste0(wildfire.dir, "/start_dates.pdf"))
+  ggplot(mergedata, aes(long, lat, group = group)) +
+    geom_polygon(aes(fill = colorBuckets)) +
+    theme(panel.background = element_rect(fill = "white")) +
+    scale_fill_brewer(palette="PuRd", labels = breaks, name = "KBDI=0 start day since 1950/01/01") +
+    coord_map(project="globular") +
+    ggtitle("Median start day, averaged per county") +
+    geom_path(data = map.states, colour = "black", size = .3) +
+    geom_path(data = mapcounties, colour = "white", size = .5, alpha = .1)
+  dev.off()
 }

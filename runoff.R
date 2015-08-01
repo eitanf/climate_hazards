@@ -106,6 +106,7 @@ plot.runoff.map <- function(year) {
   library(sp)
   library(maptools)
   library(plyr)
+  library(maps)
 
   runoff <- read.csv(paste0(root.dir, "/median_excess_runoff.", year, ".csv"))
   map.counties <- map_data("county")
@@ -121,6 +122,8 @@ plot.runoff.map <- function(year) {
 
   county.names <- sapply(counties_sp@polygons, function(x) x@ID)
   runoff$county<-county.names[indices]
+  mapcounties <- map_data("county")
+  mapstates <- map_data("state")
   mapcounties$county <- with(mapcounties, paste(region, subregion, sep = ","))
   runoff.mean <- ddply(runoff, c("county"), summarize, means = mean(median.excess.runoff))
   runoff.un <- runoff[!duplicated(runoff[c("county")]),]
