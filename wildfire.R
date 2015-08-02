@@ -12,6 +12,18 @@ models.dir <- "/data/modeldata"
 wildfire.dir <- "/data/wildfire"
 grid <- read.csv("/fast/grid.classify.csv")[,c(1,2,3,7)]
 
+map.counties <- map_data("county")
+map.counties$county <- with(map.counties, paste(region, subregion, sep = ","))
+map.states <- map_data("state")
+counties <- map('county', fill = TRUE, col = "transparent", plot = FALSE)
+IDs <- sapply(strsplit(counties$names, ":"), function(x) x[1])
+counties_sp <- map2SpatialPolygons(counties, IDs = IDs,
+                                   proj4string = CRS("+proj=longlat +datum=WGS84"))
+pointsSP <- SpatialPoints(as.data.frame(grid[,c('LON','LAT')]),
+                          proj4string = CRS("+proj=longlat +datum=WGS84"))
+indices <- over(pointsSP, counties_sp)
+county.names <- sapply(counties_sp@polygons, function(x) x@ID)
+
 models <- c("access1-0_rcp85_r1i1p1", "bcc-csm1-1-m_rcp85_r1i1p1", "bcc-csm1-1_rcp85_r1i1p1", "canesm2_rcp85_r1i1p1",
             "ccsm4_rcp85_r1i1p1", "cesm1-bgc_rcp85_r1i1p1", "cesm1-cam5_rcp85_r1i1p1", "cmcc-cm_rcp85_r1i1p1",
             "cnrm-cm5_rcp85_r1i1p1", "csiro-mk3-6-0_rcp85_r1i1p1", "fgoals-g2_rcp85_r1i1p1", "fio-esm_rcp85_r1i1p1",
@@ -233,24 +245,7 @@ start.date <- function(point.data) {
 
 # For a geo given data (already in color buckets), plot it on a US map.
 plot.on.map <- function(data, breaks, title, ylabel) {
-  map.counties <- map_data("county")
-  map.states <- map_data("state")
-
-  counties <- map('county', fill = TRUE, col = "transparent", plot = FALSE)
-  IDs <- sapply(strsplit(counties$names, ":"), function(x) x[1])
-  counties_sp <- map2SpatialPolygons(counties, IDs = IDs,
-                                     proj4string = CRS("+proj=longlat +datum=WGS84"))
-  pointsSP <- SpatialPoints(as.data.frame(dates[,c('LON','LAT')]),
-                            proj4string = CRS("+proj=longlat +datum=WGS84"))
-  indices <- over(pointsSP, counties_sp)
-  
-  county.names <- sapply(counties_sp@polygons, function(x) x@ID)
-  dates$county <- county.names[indices]
-  mapcounties <- map_data("county")
-  mapstates <- map_data("state")
-  mapcounties$county <- with(mapcounties, paste(region, subregion, sep = ","))
-
-  ggplot(mergedata, aes(long, lat, group = group)) +
+  plot <- ggplot(mergedata, aes(long, lat, group = group)) +
     geom_polygon(aes(fill = colorBuckets)) +
     theme(panel.background = element_rect(fill = "white")) +
     scale_fill_brewer(palette="PuRd", labels = breaks, name = ylabel) +
@@ -258,6 +253,8 @@ plot.on.map <- function(data, breaks, title, ylabel) {
     ggtitle(title) +
     geom_path(data = map.states, colour = "black", size = .3) +
     geom_path(data = mapcounties, colour = "white", size = .5, alpha = .1)
+
+  return(plot)
 }
 
 # This function computes for each grid point the median date for KBDI=0 start across all
@@ -276,6 +273,7 @@ plot.start.dates <- function() {
 
   dates <- read.csv(paste0(wildfire.dir, "/start_dates_across_models.csv"))
 
+  dates$county <- county.names[indices]
   dates.mean <- ddply(dates, c("county"), summarize, means = mean(median.start.day))
   dates.min <- ddply(dates, c("county"), summarize, mins = min(min.year))
   dates.un <- dates[!duplicated(dates[c("county")]),]
@@ -285,10 +283,34 @@ plot.start.dates <- function() {
   mapcounties <- map_data("county")
   breaks <- c(1000, 5000, 7500, 10000, 12500, 15000)
   dates.1$colorBuckets <- as.factor(as.numeric(cut(dates.mean$means, breaks)))
-  mergedata <- merge(mapcounties, dates.1, by = "county")
+  mergedata <- merge(map.counties, dates.1, by = "county")
   mergedata <- mergedata[order(mergedata$means),]
 
   pdf(paste0(wildfire.dir, "/start_dates.pdf"))
-  plot.on.map(mergedata, breaks, "Median start day, averaged per county", "KBDI=0 start day since 1950/01/01")
+  print(plot.on.map(mergedata, breaks, "Median start day, averaged per county", "KBDI=0 start day since 1950/01/01"))
+  dev.off()
+}
+
+# Create a plot (with 29 charts, one per model) mapping the quantity of precipitation
+# that was used to start the KBDI computation (KBDI=0) for each grid point.
+plot.start.precip <- function() {
+  files <- lapply(models, function(m) paste0(wildfire.dir, "/start_at.", m, ".csv"))
+  data <- lapply(files, read.csv)
+
+  pdf(paste0(wildfire.dir, "/start_precip.pdf"), onefile = TRUE)
+  for (i in 1:29) {
+    cur <- data[[i]]
+    cur$county <- county.names[indices]
+    rain.mean <- ddply(cur, c("county"), summarize, means = mean(weekly.precip.in))
+    rain.un <- cur[!duplicated(cur[c("county")]),]
+    rain <- merge(rain.mean, rain.un, by = 'county')
+  
+    breaks <- c(2, 3, 4, 5, 6, 7, 8, 10, 12, 14)
+    rain$colorBuckets <- as.factor(as.numeric(cut(rain.mean$means, breaks)))
+    mergedata <- merge(map.counties, rain, by = "county")
+    mergedata <- mergedata[order(mergedata$means),]
+
+    print(plot.on.map(mergedata, breaks, paste("Weekly precip averaged per county for model", models[i]), "Inch"))
+  }
   dev.off()
 }
