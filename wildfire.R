@@ -369,3 +369,39 @@ plot.high.KBDI.days <- function(threshold = 600, start.date = "01011991", end.da
 
   dev.off()
 }
+
+# This function reads in the no. of days exceeding a KBDI threshold for a given epoch,
+# Then aggregates each model by county first and then by state. Aggregation is defined as follows:
+# Multiply each county's annual mean by the WUI population of that county, and add up across the counties in the state.
+aggregate.by.state <- function(threshold = 600, start.date = "01011991", end.date = "12312010") {
+  basename <- paste(sep = "-", "/kbdi-over", threshold, substr(start.date, 5, 8), substr(end.date, 5, 8))
+  kbdi.days <- read.csv(paste0(wildfire.dir, basename, ".csv"))
+
+  # First, we'll aggregate by county, multiplying our metric by WUI population
+
+  # Get mean metric per county:
+  county.means <- group_by(kbdi.days[,-c(1,2,4)], GEOID) %>% summarise_each(funs(mean))
+  # Divide by 20 to look at annual mean:
+  annual.means <- county.means[2:ncol(county.means)] / 20
+
+  # Get population per counties of interest:
+  pop <- read.csv("/media/eitan/My Book/wui.cty.all.csv")
+  countypop <- data.frame(pop = pop$POP2010, row.names = pop$ID)
+  county.pop <- countypop[as.character(county.means$GEOID),]
+
+  # Multiply by county WUI population and convert GEOID to state ID:
+  county.sums <- cbind(as.integer(county.means$GEOID / 1000), county.pop * annual.means)
+  names(county.sums)[1] = "State"
+
+  # Now aggregate by state:
+  state.sums <- group_by(county.sums, State) %>% summarise_each(funs(sum))
+  statepop <- read.csv("/media/eitan/My Book/statepop.csv")
+
+  # Create final table for saving:
+  ret <- data.frame(STFIPS = state.sums$State, POP2010 = statepop$POP10)
+  ret <- cbind(ret, state.sums[2:ncol(state.sums)])
+  ret <- cbind(ret, t(apply(state.sums[2:ncol(state.sums)], 1, quantile)))
+
+  outname <- paste(sep = "-", "/aggregated-kbdi-over", threshold, substr(start.date, 5, 8), substr(end.date, 5, 8))
+  write.csv(ret, paste0(wildfire.dir, outname), row.names = FALSE)
+}
