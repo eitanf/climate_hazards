@@ -245,14 +245,14 @@ start.date <- function(point.data) {
 
 # For a geo given data (already in color buckets), plot it on a US map.
 plot.on.map <- function(data, breaks, title, ylabel) {
-  plot <- ggplot(mergedata, aes(long, lat, group = group)) +
+  plot <- ggplot(data, aes(long, lat, group = group)) +
     geom_polygon(aes(fill = colorBuckets)) +
     theme(panel.background = element_rect(fill = "white")) +
     scale_fill_brewer(palette="PuRd", labels = breaks, name = ylabel) +
     coord_map(project="globular") +
     ggtitle(title) +
     geom_path(data = map.states, colour = "black", size = .3) +
-    geom_path(data = mapcounties, colour = "white", size = .5, alpha = .1)
+    geom_path(data = map.counties, colour = "white", size = .5, alpha = .1)
 
   return(plot)
 }
@@ -280,7 +280,6 @@ plot.start.dates <- function() {
   dates.1 <- merge(dates.mean, dates.un, by = 'county')
   dates.2 <- merge(dates.min, dates.un, by = 'county')
 
-  mapcounties <- map_data("county")
   breaks <- c(1000, 5000, 7500, 10000, 12500, 15000)
   dates.1$colorBuckets <- as.factor(as.numeric(cut(dates.mean$means, breaks)))
   mergedata <- merge(map.counties, dates.1, by = "county")
@@ -312,5 +311,61 @@ plot.start.precip <- function() {
 
     print(plot.on.map(mergedata, breaks, paste("Weekly precip averaged per county for model", models[i]), "Inch"))
   }
+  dev.off()
+}
+
+# Plot the total no. of days above a given KBDI threshold for a given period.
+# Plots three maps, one for each of 25%, 50%, 75% percentile results across models.
+plot.high.KBDI.days <- function(threshold = 600, start.date = "01011991", end.date = "12312010") {
+  annual.high.kbdi <- grid
+
+  for (model in models) {
+    print(paste("Reading data for model", model))
+    load(paste0(wildfire.dir, "/kbdi.", model, ".Rdata"))
+    start <- which(names(kbdi) == start.date)
+    end <- which(names(kbdi) == end.date)
+    high.days <- apply(kbdi[,start:end], 1, function(row) { sum(row >= threshold)})
+    annual.high.kbdi <- cbind(annual.high.kbdi, high.days)
+    rm(kbdi)
+    gc()
+  }
+
+  basename <- paste(sep = "-", "/kbdi-over", threshold, substr(start.date, 5, 8), substr(end.date, 5, 8))
+  names(annual.high.kbdi) = c(names(grid), models)
+  write.csv(annual.high.kbdi, paste0(wildfire.dir, basename, ".csv"), row.names = FALSE)
+
+  annual.high.kbdi <- read.csv(paste0(wildfire.dir, basename, ".csv"))
+  tper <- apply(annual.high.kbdi[,5:ncol(annual.high.kbdi)], 1, quantile)
+  percentiles <- cbind(grid[,1:2], t(tper)[,2:4])
+  names(percentiles)[3:5] = c("p25", "p50", "p75")
+
+  pdf(paste0(wildfire.dir, basename, ".pdf"), onefile = TRUE)
+  breaks <- c(100, 200, 300, 400, 500, 750, 1000, 2000, 4000, 5000)
+  percentiles$county <- county.names[indices]
+
+  per.mean <- ddply(percentiles, c("county"), summarize, means = mean(p25))
+  per.un <- percentiles[!duplicated(percentiles[c("county")]),]
+  per <- merge(per.mean, per.un, by = 'county')
+  per$colorBuckets <- as.factor(as.numeric(cut(per.mean$means, breaks)))
+  mergedata <- merge(map.counties, per, by = "county")
+  mergedata <- mergedata[order(mergedata$means),]
+  print(plot.on.map(mergedata, breaks, paste0("KBDI>=", threshold, ", p25 across models"), "Days [1991-2010]"))
+
+  per.mean <- ddply(percentiles, c("county"), summarize, means = mean(p50))
+  per.un <- percentiles[!duplicated(percentiles[c("county")]),]
+  per <- merge(per.mean, per.un, by = 'county')
+  per$colorBuckets <- as.factor(as.numeric(cut(per.mean$means, breaks)))
+  mergedata <- merge(map.counties, per, by = "county")
+  mergedata <- mergedata[order(mergedata$means),]
+  print(plot.on.map(mergedata, breaks, paste0("KBDI>=", threshold, ", p50 across models"), "Days [1991-2010]"))
+
+  per.mean <- ddply(percentiles, c("county"), summarize, means = mean(p75))
+  per.un <- percentiles[!duplicated(percentiles[c("county")]),]
+  per <- merge(per.mean, per.un, by = 'county')
+  per$colorBuckets <- as.factor(as.numeric(cut(per.mean$means, breaks)))
+  mergedata <- merge(map.counties, per, by = "county")
+  mergedata <- mergedata[order(mergedata$means),]
+  print(plot.on.map(mergedata, breaks, paste0("KBDI>=", threshold, ", p75 across models"), "Days [1991-2010]"))
+
   dev.off()
 }
