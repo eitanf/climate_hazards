@@ -386,7 +386,7 @@ aggregate.by.state <- function(threshold = 600, start.date = "01011991", end.dat
 
   # Get population per counties of interest:
   pop <- read.csv("/media/eitan/My Book/wui.cty.all.csv")
-  countypop <- data.frame(pop = pop$POP2010, row.names = pop$ID)
+  countypop <- data.frame(pop = pop$WUIPOP, row.names = pop$ID)
   county.pop <- countypop[as.character(county.means$GEOID),]
 
   # Multiply by county WUI population and convert GEOID to state ID:
