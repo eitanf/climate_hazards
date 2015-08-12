@@ -1,4 +1,3 @@
-// TODO: Run with valgrind!
 /*
  * Combine humidity and teperature to come up with a heat risk category
  * Receives as input filenames for humidity and temperature data.
@@ -74,8 +73,8 @@ void compute_row(char* humline, char* templine)
   char *savehum, *savetemp, *tstr, *hstr;
 
   // Get coordinates from both rows, assert equal
-  float lontemp = atof(strtok_r(templine, ",", &savetemp));
-  float lattemp = atof(strtok_r(NULL, ",", &savetemp));
+  float lattemp = atof(strtok_r(templine, ",", &savetemp));
+  float lontemp = atof(strtok_r(NULL, ",", &savetemp));
   float lathum = atof(strtok_r(humline, ",", &savehum));
   float lonhum = atof(strtok_r(NULL, ",", &savehum));
   assert(lontemp == lonhum);

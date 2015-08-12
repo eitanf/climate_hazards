@@ -12,7 +12,7 @@ models <- c("access1-0_rcp85_r1i1p1", "bcc-csm1-1-m_rcp85_r1i1p1", "bcc-csm1-1_r
             "miroc5_rcp85_r1i1p1", "mpi-esm-lr_rcp85_r1i1p1", "mpi-esm-mr_rcp85_r1i1p1", "mri-cgcm3_rcp85_r1i1p1", "noresm1-m_rcp85_r1i1p1")
 years <- c("2021", "2041")
 
-grid <- read.csv(paste(root_dir, "grid.counties.csv", sep = "/"))
+grid <- read.csv(paste(root_dir, "grid.classify.csv", sep = "/"))
 danger_index <- read.csv(paste(root_dir, "heat_index_celsius.csv", sep = "/"), skip = 1)
 rownames(danger_index) <- danger_index$Humidity / 100
 
@@ -22,7 +22,7 @@ read_humidity <- function() {
   print ("Reading humidities...")
   hum <- read.csv("humidity.csv", check.names = FALSE)
   names(hum)[3:7307] = str_pad(names(hum)[3:7307], 8, pad = "0")
-  hum <- merge(hum, grid)
+  hum <- merge(hum, grid[,1:2])
   hum <- hum[with(hum, order(LON, LAT)),]
   print ("Done!")
   hum
@@ -33,9 +33,7 @@ read_humidity <- function() {
 read_temps <- function(hum) {
   print ("Reading temperatures...")
   load("tmax.Rdata")
-  tmax <- merge(tmax, hum, by = c("LON", "LAT"))
-  tmax <- tmax[,-grep(".y", names(tmax))]
-  names(tmax) <- gsub(".x", "", names(tmax))
+  tmax <- merge(tmax, hum[,1:2])
   tmax <- tmax[with(tmax, order(LON, LAT)),]
   print ("Done!")
   tmax
