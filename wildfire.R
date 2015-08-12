@@ -24,6 +24,14 @@ pointsSP <- SpatialPoints(as.data.frame(grid[,c('LON','LAT')]),
 indices <- over(pointsSP, counties_sp)
 county.names <- sapply(counties_sp@polygons, function(x) x@ID)
 
+# US counties that have no grid points:
+missing.counties <- c(6075, 25019, 29510, 44001, 53055, 51720, 51520, 51640, 51750, 51775, 51580, 51530, 51790, 51660,
+                      51540, 51600, 51013, 51683, 51685, 51630, 51670, 51570, 51830, 51735, 51595, 51610, 51678, 51690, 51710)
+# The nearest respective counties to use for the missing.counties
+replacement.counties <- c(6081, 25007, 29189, 44005, 53029, 51195, 51191, 51077, 51121, 51161, 51005, 51163, 51015,
+                          51165, 51003, 51059, 51059, 51153, 51153, 51177, 51149, 51041, 51095, 51650, 51081, 51059,
+                          51163, 51089, 51740)
+
 models <- c("access1-0_rcp85_r1i1p1", "bcc-csm1-1-m_rcp85_r1i1p1", "bcc-csm1-1_rcp85_r1i1p1", "canesm2_rcp85_r1i1p1",
             "ccsm4_rcp85_r1i1p1", "cesm1-bgc_rcp85_r1i1p1", "cesm1-cam5_rcp85_r1i1p1", "cmcc-cm_rcp85_r1i1p1",
             "cnrm-cm5_rcp85_r1i1p1", "csiro-mk3-6-0_rcp85_r1i1p1", "fgoals-g2_rcp85_r1i1p1", "fio-esm_rcp85_r1i1p1",
@@ -381,6 +389,14 @@ aggregate.by.state <- function(threshold = 600, start.date = "01011991", end.dat
 
   # Get mean metric per county:
   county.means <- group_by(kbdi.days[,-c(1,2,4)], GEOID) %>% summarise_each(funs(mean))
+
+  # Copy over data from some counties to counties with no grid points, so we have all US counties:
+  for (i in 1:length(missing.counties)) {
+    county.means <- rbind(county.means,
+                          cbind(data.frame(GEOID = missing.counties[i]),
+                                county.means[county.means$GEOID == replacement.counties[i], 2:ncol(county.means)]))
+  }
+
   # Divide by 20 to look at annual mean:
   annual.means <- county.means[2:ncol(county.means)] / 20
 
