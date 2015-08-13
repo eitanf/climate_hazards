@@ -414,10 +414,10 @@ aggregate.by.state <- function(threshold = 600, start.date = "01011991", end.dat
   statepop <- read.csv("/media/eitan/My Book/statepop.csv")
 
   # Create final table for saving:
-  ret <- data.frame(STFIPS = state.sums$State, POP2010 = statepop$POP10)
-  ret <- cbind(ret, state.sums[2:ncol(state.sums)])
-  ret <- cbind(ret, t(apply(state.sums[2:ncol(state.sums)], 1, quantile)))
+  final <- data.frame(STFIPS = state.sums$State, POP2010 = statepop$POP10)
+  final <- cbind(final, state.sums[2:ncol(state.sums)])
+  final <- cbind(final, t(apply(state.sums[2:ncol(state.sums)], 1, quantile)))
 
   outname <- paste(sep = "-", "/aggregated-kbdi-over", threshold, substr(start.date, 5, 8), substr(end.date, 5, 8))
-  write.csv(ret, paste0(wildfire.dir, outname), row.names = FALSE)
+  write.csv(final, paste0(wildfire.dir, outname), row.names = FALSE)
 }
