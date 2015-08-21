@@ -2,7 +2,7 @@
 
 library(dplyr)
 
-root.dir <- "/data/runoff"
+root.dir <- "/fast/runoff"
 
 models <- c("access1-0_rcp85_r1i1p1", "bcc-csm1-1-m_rcp85_r1i1p1", "bcc-csm1-1_rcp85_r1i1p1", "canesm2_rcp85_r1i1p1",
             "ccsm4_rcp85_r1i1p1", "cesm1-bgc_rcp85_r1i1p1", "cesm1-cam5_rcp85_r1i1p1", "cmcc-cm_rcp85_r1i1p1",
@@ -12,6 +12,8 @@ models <- c("access1-0_rcp85_r1i1p1", "bcc-csm1-1-m_rcp85_r1i1p1", "bcc-csm1-1_r
             "ipsl-cm5a-mr_rcp85_r1i1p1", "ipsl-cm5b-lr_rcp85_r1i1p1", "miroc-esm-chem_rcp85_r1i1p1", "miroc-esm_rcp85_r1i1p1",
             "miroc5_rcp85_r1i1p1", "mpi-esm-lr_rcp85_r1i1p1", "mpi-esm-mr_rcp85_r1i1p1", "mri-cgcm3_rcp85_r1i1p1", "noresm1-m_rcp85_r1i1p1")
 
+
+grid <- read.csv("/fast/grid.classify.csv")[,c(1,2,3,7)]
 
 # Given a date string of the foramt "MMDDYYYY" return a 4-letter string representing
 # the water year, running from Oct. 1st of the previous year to Sep. 30th of this one.
@@ -29,9 +31,13 @@ water.year <- function(date) {
 total_runoff <- function(model) {
   # Read in modeled data water years 1991-2010, 2021-2040, 2041-2060:
   print(paste("Reading in runoff files for model", model, "at time", Sys.time()))
-  runoff.91 <- read.csv(paste0(root.dir, "/total_runoff.", model, ".1991.csv"), check.names = FALSE)
-  runoff.21 <- read.csv(paste0(root.dir, "/total_runoff.", model, ".2021.csv"), check.names = FALSE)
-  runoff.41 <- read.csv(paste0(root.dir, "/total_runoff.", model, ".2041.csv"), check.names = FALSE)
+  load(paste0(root.dir, "/total_runoff.", model, ".1991.csv"))
+  runoff.91 <- runoff
+  load(paste0(root.dir, "/total_runoff.", model, ".2021.csv"))
+  runoff.21 <- runoff
+  load(paste0(root.dir, "/total_runoff.", model, ".2041.csv"))
+  runoff.41 <- runoff
+  rm(runoff)
 
   # Save first five columns and delete them, to compare only runoff values:
   coords <- runoff.91[,1:5]
@@ -218,16 +224,63 @@ median.runoff.agreement <- function(models) {
   return(ret)
 }
 
-for (model in models) {
-  total_runoff(model)
+# For a given model and start year, compute for each grid point the mean annual value
+# of peak runoff over any 48 hours across the year.
+peak.48hr.runoff <- function(model, startyr) {
+  print(paste("Load model:", model, "year:", startyr, "at:", Sys.time()))
+  load(paste0(root.dir, "/total_runoff.", model, ".", startyr, ".RData"))
+  runoff <- merge(grid, na.omit(runoff))
+  runoff$GEOID <- as.integer(runoff$GEOID / 1000)
+  names(runoff)[3] <- "STFIPS"
+
+  # Compute 48-hour sums
+  sums48 <- runoff[,7:ncol(runoff)] + runoff[,6:(ncol(runoff) - 1)]
+
+  # Compute mean of max 48-hour runoff per year:
+  breaks = which(substr(names(sums48), 1, 4) == "0930")
+  max.sum = apply(sums48[,1:breaks[1]], 1, max)
+  for (i in 1 : (length(breaks) - 1)) {
+    max.sum = max.sum + apply(sums48[,(breaks[i] + 1):breaks[i + 1]], 1, max)
+  }
+  avg <- max.sum / length(breaks)
+
+  ret <- cbind(runoff[,1:4], avg)
+  names(ret)[ncol(ret)] = model
+  return(ret)
 }
 
-watersheds <- read.csv(paste0(root.dir, "/huc8pops.csv"))
-watersheds <- rename(watersheds, state = STFIPS)
+aggreagate.peak.48 <- function(startyr) {
+  df <- peak.48hr.runoff(models[1], startyr)
 
-for (model in models) {
-  compute.state.runoff(watersheds, model)
+  for (m in models[2:length(models)]) {
+    df <- merge(df, peak.48hr.runoff(m, startyr))
+  }
+
+  print(paste("Aggregating year:", startyr, "at:", Sys.time()))
+  sfha <- read.csv('/media/eitan/My Book/conus.sfha.ws.csv')
+  statepop <- read.csv("/media/eitan/My Book/statepop.csv")
+
+  watershed.means <- group_by(df[,3:ncol(df)], STFIPS, HUC8) %>% summarise_each(funs(mean))
+  watershed.means <- merge(sfha[,c(1,3,5)], watershed.means)
+  for (i in 4:ncol(watershed.means)) {
+    watershed.means[,i] = watershed.means[,i] * watershed.means$POP
+  }
+
+  # Compute state aggregations:
+  unweighted <- group_by(df[,c(3, 5:ncol(df))], STFIPS) %>% summarise_each(funs(mean))
+  absolute <- group_by(watershed.means[,c(1,4:ncol(watershed.means))], STFIPS) %>% summarise_each(funs(sum))
+  relative <- absolute
+  for (i in 2:ncol(relative)) {
+    relative[,i] = relative[,i] / statepop$POP10
+  }
+
+  # Compute quantiles across models and output to files:
+  unweighted <- cbind(unweighted, t(apply(unweighted[,2:ncol(unweighted)], 1, quantile)))
+  write.csv(unweighted, paste0(root.dir, "/aggregated-unweighted.", startyr, ".csv"), row.names = FALSE)
+
+  absolute <- cbind(absolute, t(apply(absolute[,2:ncol(absolute)], 1, quantile)))
+  write.csv(absolute, paste0(root.dir, "/aggregated-absolute.", startyr, ".csv"), row.names = FALSE)
+
+  relative <- cbind(relative, t(apply(relative[,2:ncol(relative)], 1, quantile)))
+  write.csv(relative, paste0(root.dir, "/aggregated-relative.", startyr, ".csv"), row.names = FALSE)
 }
-
-final.results <- median.runoff.agreement(models)
-write.csv(final.results, "weighted_runoff_summary.csv", row.names = FALSE)
