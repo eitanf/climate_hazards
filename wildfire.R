@@ -112,9 +112,9 @@ NumericMatrix fast_kbdi(const NumericMatrix& daily_precip, const NumericMatrix& 
   for (auto j = 0; j < nr; ++j) {
     const auto first = kbdi0_index[j];  // Start computing KBDI here. Remember C++ is 0-index based!
     double Q = 0.;     // Latest KBDI value
-    double cumP = 1000.;  // Cummulative precipitation up to now during wet spell
+    double cumP = 1000.;  // Cumulative precipitation up to now during wet spell
 
-    // Compute mean annual preciptation:
+    // Compute mean annual precipitation:
     double R = 0.;
     for (auto i = first; i < nc; ++i)  R = R + daily_precip(j, i);
     R = 365 * R / (nc - first);      // Divide by no. of years.
@@ -158,9 +158,9 @@ compute.kbdi <- function(daily.precip, daily.tmax, kbdi0.index) {
   for (j in 1:nr) {
     first = kbdi0.index[j] + 1  # Start computing KBDI here.
     Q = 0.   # Latest KBDI value
-    cumP = 1000.  # Cummulative precipitation up to now during wet spell
+    cumP = 1000.  # Cumulative precipitation up to now during wet spell
 
-    # Compute mean annual preciptation:
+    # Compute mean annual precipitation:
     R = 0.
     for (i in first:nc) R = R + daily.precip[j, i]
     R = 365 * R / (nc - first)      # Divide by no. of years.

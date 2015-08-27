@@ -8,7 +8,7 @@ library(dplyr)
 netcdf.dir <- "/media//eitan/My Book/nex-gddp"
 output.dir <- "/fast/ak_hi"
 
-grid <- read.csv("/media/eitan/My Book/ak_hi_grid_cty.csv")
+grid <- read.csv("/media/eitan/My Book/ak_hi_grid.csv")
 
 models <- c("ACCESS1-0", "BNU-ESM", "CCSM4", "CESM1", "CNRM-CM5", "CSIRO-Mk3-6-0", "CanESM2", "GFDL-CM3", "GFDL-ESM2G",
             "GFDL-ESM2M", "IPSL-CM5A-LR", "IPSL-CM5A-MR", "MIROC-ESM-CHEM", "MIROC-ESM", "MIROC5", "MPI-ESM-LR", "MPI-ESM-MR",
@@ -29,7 +29,7 @@ read.file <- function(mtype, fn) {
   var <- ncvar_get(nc, gvar);
   fillvalue <- ncatt_get(nc, "pr", "_FillValue")$value;
   var[var == fillvalue] <- NA;
-  nc_close(nc);
+  nc_close(nc)
 
   # Attach one column per day of modeled variable
   names(df) <- c("LON","LAT");
@@ -40,8 +40,8 @@ read.file <- function(mtype, fn) {
   
   # Reduce to desired grid points:
   df$LON[df$LON > 180] <- df$LON[df$LON > 180] - 360
-  df <- merge(grid, df)
-  
+  df <- merge(grid[,1:2], df)
+
   return(df)
 }
 
@@ -51,12 +51,12 @@ extract.grid.data <- function(mtype, model) {
   df <- grid
   for (fn in list.files(pattern = paste0(mtype, ".*", model, "_[12][09][0-9][0-9].nc"))) {
     annual <- read.file(mtype, fn)
-    df <- cbind(df, annual[3:ncol(annual)])
   }
   setwd(output.dir)
   save(df, file = paste(sep = ".", "all", mtype, model, "RData"))
 }
 
+############################## Heatwave hazard ##########################################
 
 # For a given subset of tmax, compute the number of times for each grid point where a 3-day
 # run of temperatures exceeds a threshold for that grid point.
@@ -138,4 +138,138 @@ aggregate.heatwave.days <- function() {
             file = paste0(output.dir, "/aggregated-heatwave.2021.csv"), row.names = FALSE)
   write.csv(aggregate.heatwave.aux(res.41[,5:ncol(res.41)]),
             file = paste0(output.dir, "/aggregated-heatwave.2041.csv"), row.names = FALSE)
+}
+
+
+# Given a vector of daily precipitation amounts in mm, compute for each day
+# the total precip in the 7 days ending in this day, in inches.
+# For the first 6 days, no value is computed.
+compute.weekly.precip <- function(daily.precip) {
+  ret <- rep(0, 6)
+  ret[7] <- sum(daily.precip[1:7])
+  
+  for (i in 8:length(daily.precip)) {
+    ret[i] = ret[i - 1] + daily.precip[i] - daily.precip[i - 7]
+  }
+  
+  ret = ret * 0.0393701  # Convert mm to inches
+  return(ret)
+}
+
+############################# Wildfire hazard #################################################
+
+# Given a vector of daily precipitation amounts in mm/s, compute for each day
+# the total precip in the 7 days ending in this day, in inches.
+# For the first 6 days, no value is computed.
+weekly.precip.str <- '
+NumericVector fast_weekly_precip(NumericVector daily_precip) {
+  auto sz = daily_precip.size();
+NumericVector ret(sz);
+
+ret[0] = ret[1] = ret[2] = ret[3] = ret[4] = ret[5] = 0.;
+ret[6] = daily_precip[0] + daily_precip[1] + daily_precip[2] + daily_precip[3] +
+daily_precip[4] + daily_precip[5] + daily_precip[6];
+
+for (auto i = 7; i < sz; ++i) {
+ret[i] = ret[i - 1] + daily_precip[i] - daily_precip[i - 7];
+}
+
+return(ret * 0.0393701 * 60 * 60 * 24);  // Convert from mm/sec to in/day
+}
+'
+cppFunction(weekly.precip.str, plugins = c("cpp11"))
+
+# For a given series of max temperatures and precipitation, find the latest
+# index prior to start.date that can be considered as KBDI=0, based on
+# having the maximum weekly rainfall or 7.874in of rain, whicever is higher.
+find.KBDI.start.index <- function(weekly.precip) {
+  capped <- pmin(weekly.precip, 7.874)
+  return(max(which(capped == max(capped))))
+}
+
+# Given an array of daily maximum temperatures (in C) and daily precipitation (in inches),
+# compute the KBDI value for each day starting from the date (array index) for which KBDI
+# is defined to be 0.
+# The formula follows Liu et al., "Trends in global wildfire potential in a changing climate", in
+# Forest Ecology and Management, 2010 (259), pp. 685--697. The algorithm is further elaborated
+# in Janis et al., http://climate.geog.udel.edu/~climate/publication_html/Pdf/JJF_IJWF_02.pdf
+# "Near-real time mapping of Keetch-Byram drought index in the south-eastern United States",
+# Int. J. of Wildland Fire, 2002 (11), pp. 281--289
+compute.KBDI.str <- '
+NumericMatrix fast_kbdi(const NumericMatrix& daily_precip, const NumericMatrix& daily_tmax, const NumericVector& kbdi0_index) {
+  const auto nr = daily_precip.nrow();
+  const auto nc = daily_precip.ncol();
+  NumericMatrix ret(nr, nc);
+  std::fill(ret.begin(), ret.end(), 0.);
+
+  for (auto j = 0; j < nr; ++j) {
+    const auto first = kbdi0_index[j];  // Start computing KBDI here. Remember C++ is 0-index based!
+    double Q = 0.;     // Latest KBDI value
+    double cumP = 1000.;  // Cumulative precipitation up to now during wet spell
+
+    // Compute mean annual precipitation:
+    double R = 0.;
+    for (auto i = first; i < nc; ++i)  R = R + daily_precip(j, i);
+    R = 365 * R / (nc - first);      // Divide by no. of years.
+
+    // Now, for each subsequent day, compute KBDI as a function of the previous days KBDI:
+    for (auto i = first; i < nc; ++i) {
+      const auto temp = daily_tmax(j, i);
+      const auto p = daily_precip(j, i);
+
+      // Change in saturation from yesterday, if temperature is high enough:
+      const auto dQ = (temp <= 50.)?
+                       0.
+                     : 0.001 * (800 - Q) * (0.968 * exp(0.0486 * temp) - 8.3) /
+                       (1. + 10.88 * exp(-0.0441 * R));
+
+      // Change in precipitation (adjusted downward by 0.2in after a dry period of < 0.2in):
+      cumP = (p > 0.)? cumP + p : 0.;
+      // Have we already accumulated more than 0.2in before today in spell? if not, substract it
+      const auto dP = 100. * ((cumP - p > 0.2)? p : std::max(cumP - 0.2, 0.));
+
+      //      if (i <= first + 10)
+      //        Rcpp::Rcout << "j:" << j << "   i:" << i << "   Q:" << Q << "   p:" << p << "   T:" << temp << "   dQ:" << dQ << "   dP:" << dP << std::endl;
+
+      Q = std::max(Q + dQ - dP, 0.);
+      ret(j, i) = Q;
+    }
+  }
+
+  return (ret);
+}
+'
+cppFunction(compute.KBDI.str, plugins = c("cpp11"))
+
+# For a given model, compute its KBDI initialization date, then follow through from
+# that date into the future, computing KBDI for each day.
+compute.model.KBDI <- function(model) {
+  print(paste("Reading inputs for model", model, "at time", Sys.time()))
+  load(paste0(output.dir, "/all.tasmax.", model, ".RData"))
+  tmax <- df
+  load(paste0(output.dir, "/all.pr.", model, ".RData"))
+  precip <- df
+  
+  print(paste("Computing KBDI==0 indices for model", model, "at time", Sys.time()))
+  baseline.start <- which(names(precip) == "01011991") # The time from which we record measurements
+  # The last date to consider for KBDI=0 start is the prior date. Compute weekly precip up to then:
+  first <- which(names(precip) == "01011950")
+  weekly.precip = apply(precip[,first:(baseline.start - 1)], 1, fast_weekly_precip)
+  kbdi0 <- apply(weekly.precip, 2, find.KBDI.start.index)
+  
+  start.values <- data.frame(LON = precip$LON, LAT = precip$LAT, date = names(precip)[kbdi0 + first - 1], index = kbdi0,
+                             weekly.precip.in = sapply(1:length(kbdi0), function(i) weekly.precip[kbdi0[i], i]))
+  write.csv(start.values, paste0(output.dir, "/wildfire/start_at.", model, ".csv"), row.names = FALSE)
+  
+  print(paste("Computing KBDI values for model", model, "at time", Sys.time()))
+  pr <- as.matrix(precip[,5:ncol(precip)]) * 0.0393701 * 86400  # Convert mm/sec to inches/day
+  tm <- (as.matrix(tmax[,5:ncol(tmax)]) - 273.15) * 1.8 + 32.   # Convert K to F
+  kbdi <- fast_kbdi(pr, tm, kbdi0)
+  
+  print(paste("Saving KBDI values for model", model, "at time", Sys.time()))
+  kbdi <- cbind(grid, kbdi)
+  names(kbdi) = names(precip)
+  save(kbdi, file = paste0(output.dir, "/wildfire/kbdi.", model, ".RData"))
+  
+  print(paste("Done at", Sys.time()))
 }
