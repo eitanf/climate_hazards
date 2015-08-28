@@ -4,6 +4,7 @@
 library(ncdf4)
 library(Rcpp)
 library(dplyr)
+library(doParallel);
 
 netcdf.dir <- "/media//eitan/My Book/nex-gddp"
 output.dir <- "/fast/ak_hi"
@@ -99,8 +100,9 @@ compute.mean.heatwave.days <- function(model) {
   ))
 }
 
-# Helper code for aggregate.heatwave.days for repeated code: aggregate by county and state
-aggregate.heatwave.aux <- function(metric) {
+# Helper code for repeated use: aggregate by county and state given a metric and county population.
+# Assumes the first column in metric is the GEOID, and all other columns contain metrics to aggregate.
+aggregate.by.county.and.state <- function(metric, countypop) {
   county.means <- group_by(metric, GEOID) %>% summarise_each(funs(mean))
   county.pop <- countypop[as.character(county.means$GEOID),]
   county.sums <- cbind(as.integer(county.means$GEOID / 1000), county.pop * county.means[,2:ncol(county.means)])
@@ -132,11 +134,11 @@ aggregate.heatwave.days <- function() {
   pop <- read.csv("/media/eitan/My Book/countypov.csv")
   countypop <- data.frame(pop = pop$vul.pop, row.names = pop$GEOID)
 
-  write.csv(aggregate.heatwave.aux(res.91[,5:ncol(res.91)]),
+  write.csv(aggregate.by.county.and.state(res.91[,5:ncol(res.91)], countypop),
             file = paste0(output.dir, "/aggregated-heatwave.1991.csv"), row.names = FALSE)
-  write.csv(aggregate.heatwave.aux(res.21[,5:ncol(res.21)]),
+  write.csv(aggregate.by.county.and.state(res.21[,5:ncol(res.21)], countypop),
             file = paste0(output.dir, "/aggregated-heatwave.2021.csv"), row.names = FALSE)
-  write.csv(aggregate.heatwave.aux(res.41[,5:ncol(res.41)]),
+  write.csv(aggregate.by.county.and.state(res.41[,5:ncol(res.41)], countypop),
             file = paste0(output.dir, "/aggregated-heatwave.2041.csv"), row.names = FALSE)
 }
 
@@ -147,11 +149,11 @@ aggregate.heatwave.days <- function() {
 compute.weekly.precip <- function(daily.precip) {
   ret <- rep(0, 6)
   ret[7] <- sum(daily.precip[1:7])
-  
+
   for (i in 8:length(daily.precip)) {
     ret[i] = ret[i - 1] + daily.precip[i] - daily.precip[i - 7]
   }
-  
+
   ret = ret * 0.0393701  # Convert mm to inches
   return(ret)
 }
@@ -249,27 +251,49 @@ compute.model.KBDI <- function(model) {
   tmax <- df
   load(paste0(output.dir, "/all.pr.", model, ".RData"))
   precip <- df
-  
+
   print(paste("Computing KBDI==0 indices for model", model, "at time", Sys.time()))
   baseline.start <- which(names(precip) == "01011991") # The time from which we record measurements
   # The last date to consider for KBDI=0 start is the prior date. Compute weekly precip up to then:
   first <- which(names(precip) == "01011950")
   weekly.precip = apply(precip[,first:(baseline.start - 1)], 1, fast_weekly_precip)
   kbdi0 <- apply(weekly.precip, 2, find.KBDI.start.index)
-  
+
   start.values <- data.frame(LON = precip$LON, LAT = precip$LAT, date = names(precip)[kbdi0 + first - 1], index = kbdi0,
                              weekly.precip.in = sapply(1:length(kbdi0), function(i) weekly.precip[kbdi0[i], i]))
   write.csv(start.values, paste0(output.dir, "/wildfire/start_at.", model, ".csv"), row.names = FALSE)
-  
+
   print(paste("Computing KBDI values for model", model, "at time", Sys.time()))
   pr <- as.matrix(precip[,5:ncol(precip)]) * 0.0393701 * 86400  # Convert mm/sec to inches/day
   tm <- (as.matrix(tmax[,5:ncol(tmax)]) - 273.15) * 1.8 + 32.   # Convert K to F
   kbdi <- fast_kbdi(pr, tm, kbdi0)
-  
+
   print(paste("Saving KBDI values for model", model, "at time", Sys.time()))
   kbdi <- cbind(grid, kbdi)
   names(kbdi) = names(precip)
   save(kbdi, file = paste0(output.dir, "/wildfire/kbdi.", model, ".RData"))
-  
+
   print(paste("Done at", Sys.time()))
 }
+
+compute.wildfire.by.state <- function(threshold = 600, start.date = "01011991", end.date = "12312010") {
+  annual.high.kbdi <- grid
+  
+  for (model in models) {
+    print(paste("Reading data for model", model, "at time:", Sys.time()))
+    load(paste0(output.dir, "/wildfire/kbdi.", model, ".RData"))
+    start <- which(names(kbdi) == start.date)
+    end <- which(names(kbdi) == end.date)
+    high.days <- apply(kbdi[,start:end], 1, function(row) { sum(row >= threshold)} / 20)
+    annual.high.kbdi <- cbind(annual.high.kbdi, high.days)
+  }
+  names(annual.high.kbdi) = c(names(grid), models)
+
+  pop <- read.csv("/media/eitan/My Book/countypov.csv")
+  countypop <- data.frame(pop = pop$POP2010, row.names = pop$GEOID)
+  aggregated <- aggregate.by.county.and.state(annual.high.kbdi[,c(3,5:ncol(annual.high.kbdi))], countypop)
+
+  outname <- paste0(output.dir, "wildfire/aggregated-kbdi-over", threshold, substr(start.date, 5, 8), substr(end.date, 5, 8))
+  write.csv(aggregated, outname, row.names = FALSE)
+}
+
