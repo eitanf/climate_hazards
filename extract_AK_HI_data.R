@@ -297,3 +297,100 @@ compute.wildfire.by.state <- function(threshold = 600, start.date = "01011991", 
   write.csv(aggregated, outname, row.names = FALSE)
 }
 
+
+############################################### Compute danger days  ################################
+
+yr <- c(1:365);
+lyr <- c(1:366);
+yrday <- c(yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr)
+
+# Create all the INI input files to MTCLIM for AK/HI
+create.ini.files <- function() {
+  registerDoParallel(cores = 50);
+  for (model in models) {
+    for (startyr in c("1991", "2021", "2041")) {
+      print(paste("Started writing ini files for model", model, "for start year", startyr, " at:", Sys.time()))
+      foreach (i = 1:nrow(grid), .combine=c) %dopar% {
+        dir <- paste0(output.dir, "/danger_days/mtclimata/", model, "/", startyr, "/")
+        dir.create(dir,recursive = TRUE)
+        fn <- paste0(startyr, "_", grid[i,"LAT"], "_" , grid[i, "LON"])
+        fname <- paste0(dir, fn, ".ini");
+
+        if (grid$elev[i] != -500) {
+          cat(paste0("MTCLIM Initialization file for LAT ", grid[i, "LAT"], " LON ", grid[i, "LON"]), file = fname, sep = "\n");
+          cat(paste0("Reference row in elev: ", i, " / model: ", model, " / start year: ", startyr), file = fname, sep = "\n", append = TRUE);
+          cat("", file = fname, sep = "\n", append = TRUE)
+          cat("IOFILES", file = fname, sep = "\n", append = TRUE)
+          cat(paste0(fn, ".dat"), file = fname, sep = "\n", append = TRUE)
+          cat(fn, file = fname, sep = "\n", append = TRUE)
+          cat("", file = fname, sep = "\n", append = TRUE)
+          cat("CONTROL", file = fname, sep = "\n", append = TRUE)
+          cat("2", file = fname, sep = "\n", append = TRUE)
+          cat("7305", file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("1", file = fname, sep = "\n", append = TRUE)
+          cat("1", file = fname, sep = "\n", append = TRUE)
+          cat("", file = fname, sep = "\n", append = TRUE)
+          cat("PARAMETERS", file = fname, sep = "\n", append = TRUE)
+          cat(grid[i, "elev"], file = fname, sep = "\n", append = TRUE)
+          cat("1.0", file = fname, sep = "\n", append = TRUE)
+          cat(grid[i, "LAT"], file = fname, sep = "\n", append = TRUE)
+          cat(grid[i, "elev"], file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("1.0", file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("0", file = fname, sep = "\n", append = TRUE)
+          cat("", file = fname, sep = "\n", append = TRUE)
+          cat("END", file = fname, sep = "\n", append = TRUE)
+        }
+      }
+      print(paste("Finished writing ini files for model",model,"for start year",startyr," at: ",Sys.time()))
+    }
+  }
+}
+
+
+# Create data files for MTCLIM
+create.dat.files <- function() {
+  for (model in models) {
+    print(paste("Loading tasmax for", model, "at", Sys.time()))
+    load(paste0(output.dir, "/all.tasmax.", model, ".RData"))
+    tmax <- cbind(grid, df[,5:ncol(df)] - 273.15)  # Convert K to C
+    print(paste("Loading tasmin for", model, "at", Sys.time()))
+    load(paste0(output.dir, "/all.tasmin.", model, ".RData"))
+    tmin <- cbind(grid, df[,5:ncol(df)] - 273.15)  # Convert K to C
+    load(paste0(output.dir, "/all.pr.", model, ".RData"))
+    precip <- cbind(grid, df[,5:ncol(df)] * 86400 / 10)  # Convert mm/sec to cm/day
+
+    for (startyr in c("1991", "2021", "2041")) {
+      start <- which(names(tmax) == paste0("0101", startyr))
+      end <- which(names(tmax) == paste0("1231", as.integer(startyr) + 19))
+      dir <- paste0(output.dir, "/danger_days/mtclimata/", model, "/", startyr, "/")
+      dir.create(dir,recursive = TRUE)
+
+      foreach (i = 1:nrow(grid), .combine=c) %dopar% {
+        if (grid[i, "elev"] != -500) {
+          fn <- paste0(startyr, "_", grid[i, "LAT"], "_" , grid[i, "LON"])
+          fname <- paste0(dir, fn, ".dat");
+          cat("Year", "YearDay\t", "Tmax", "Tmin", "Prcp", "\n", file = fname, sep="\t\t");
+          cat("\t\t\t", "(deg C)", "(deg C)", "(cm)", "\n", file= fname, sep="\t\t", append = TRUE)
+          mintemp <- as.numeric(tmin[i, start:end]);
+          maxtemp <- as.numeric(tmax[i, start:end]);
+          pr <- as.numeric(precip[i, start:end]);
+          labels <- colnames(tmax)[start:end];
+          year <- as.numeric(substr(labels, 5, 8));
+          df <- as.data.frame(year);
+          df <- cbind(df, yrday, maxtemp, mintemp, pr);
+          write.table(df, file = fname, append = TRUE, row.names = FALSE, col.name = FALSE);
+        }
+      }
+    }
+  }
+}
+
+# At this point, you need to run mtclim on all the .ini files. Then run go() from combine_humidity.R
+# for each appropriate directory. Then, the code from heat_hazard.R can be used to compute heat index.
+# Finally, you can call aggregate.by.county.and.state from this file to combine all the results.
