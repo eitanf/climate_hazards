@@ -6,10 +6,10 @@ library(Rcpp)
 library(dplyr)
 library(doParallel);
 
-netcdf.dir <- "/media//eitan/My Book/nex-gddp"
+netcdf.dir <- "/media/eitan/My Book/nex-gddp"
 output.dir <- "/fast/ak_hi"
 
-grid <- read.csv("/media/eitan/My Book/ak_hi_grid.csv")
+grid <- read.csv("/fast/ak_hi_grid.csv")
 
 models <- c("ACCESS1-0", "BNU-ESM", "CCSM4", "CESM1", "CNRM-CM5", "CSIRO-Mk3-6-0", "CanESM2", "GFDL-CM3", "GFDL-ESM2G",
             "GFDL-ESM2M", "IPSL-CM5A-LR", "IPSL-CM5A-MR", "MIROC-ESM-CHEM", "MIROC-ESM", "MIROC5", "MPI-ESM-LR", "MPI-ESM-MR",
@@ -56,6 +56,35 @@ extract.grid.data <- function(mtype, model) {
   setwd(output.dir)
   save(df, file = paste(sep = ".", "all", mtype, model, "RData"))
 }
+
+# Utility function to normalize the resulting RData files to the proper grid and dates
+normalize_grid <-function(fn) {
+  leap.days <- sapply(seq(1952, 2072, 4), function(yr) paste0("0229", as.character(yr)))
+  format="%m%d%Y"
+  print (paste("working on", fn, "at time", Sys.time()))
+  load(fn)
+  print(dim(df))
+
+  if (nrow(df) > 4539) {
+    df <- merge(grid, df)
+  }
+
+  if (ncol(df) - 4 > 365 * 126) { # We have leap days, which must be erased:
+    df <- df[, -which(names(df) %in% leap.days)]
+  } else { # No leap days, so adjust names in dates
+    for (i in 5:ncol(df)) {
+      name <- names(df)[i]
+      if ((as.integer(substr(name, 5, 8)) %% 4 == 0) & (substr(name, 1, 4) > "0228")) {
+        names(df)[i] <- format(as.Date(name, format = format) + 1, format = format)
+      }
+    }
+  }
+  
+  print(dim(df))
+  save(df, file = fn)
+}
+
+
 
 ############################## Heatwave hazard ##########################################
 
@@ -358,10 +387,10 @@ create.dat.files <- function() {
   for (model in models) {
     print(paste("Loading tasmax for", model, "at", Sys.time()))
     load(paste0(output.dir, "/all.tasmax.", model, ".RData"))
-    tmax <- cbind(grid, df[,5:ncol(df)] - 273.15)  # Convert K to C
+    tmax <- cbind(grid, df[,5:ncol(df)] - 272.15)  # Convert K to C
     print(paste("Loading tasmin for", model, "at", Sys.time()))
     load(paste0(output.dir, "/all.tasmin.", model, ".RData"))
-    tmin <- cbind(grid, df[,5:ncol(df)] - 273.15)  # Convert K to C
+    tmin <- cbind(grid, df[,5:ncol(df)] - 272.15)  # Convert K to C
     load(paste0(output.dir, "/all.pr.", model, ".RData"))
     precip <- cbind(grid, df[,5:ncol(df)] * 86400 / 10)  # Convert mm/sec to cm/day
 
@@ -394,3 +423,5 @@ create.dat.files <- function() {
 # At this point, you need to run mtclim on all the .ini files. Then run go() from combine_humidity.R
 # for each appropriate directory. Then, the code from heat_hazard.R can be used to compute heat index.
 # Finally, you can call aggregate.by.county.and.state from this file to combine all the results.
+
+
