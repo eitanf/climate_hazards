@@ -84,7 +84,34 @@ normalize_grid <-function(fn) {
   save(df, file = fn)
 }
 
+# Produce output files with counts of incidents of tmax < tmin.
+analyze.temp.difference <- function(model) {
+  load(paste0(output.dir, "/all.tasmax.", model, ".RData"))
+  tmax <- df
+  load(paste0(output.dir, "/all.tasmin.", model, ".RData"))
+  tmin <- df
+  diff <- tmax[,5:ncol(tmax)] - tmin[,5:ncol(tmin)]
+  cutoff <- which(names(tmax) == "12312004") - 4
+  df <- cbind(tmax[,1:4],
+              apply(diff[, 1:cutoff], 1, function(row) sum(row < 0)),
+              apply(diff[, (cutoff + 1):ncol(diff)], 1, function(row) sum(row < 0)))
+  names(df)[5:6] = c("before2005", "since2005")
+  write.csv(df, file = paste0(output.dir, "/total_incidents_tmax_under_tmin.", model, ".csv"), row.names = FALSE)
 
+  month.starts <- which(substr(names(tmax), 3, 4) == "01") - 4
+  month.ends <- c(month.starts[2:length(month.starts)] - 1, ncol(tmax) - 4)
+  by.month = tmax[,1:4]
+
+  for (i in 1:length(month.starts)) {
+    by.month <- cbind(by.month, apply(diff[,month.starts[i]:month.ends[i]], 1, function(row) sum(row < 0)))
+    name <- names(diff)[month.starts[i]]
+    names(by.month)[4 + i] <- paste(sep = "/", substr(name, 1, 2), substr(name, 5, 8))
+  }
+
+  by.month <- cbind(by.month, apply(by.month[,5:ncol(by.month)], 1, sum))
+  names(by.month)[ncol(by.month)] <- "total_incidents"
+  write.csv(by.month, file = paste0(output.dir, "/monthly_incidents.", model, ".csv"), row.names = FALSE)
+}
 
 ############################## Heatwave hazard ##########################################
 
