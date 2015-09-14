@@ -455,7 +455,26 @@ create.dat.files <- function() {
 }
 
 # At this point, you need to run mtclim on all the .ini files. Then run go() from combine_humidity.R
-# for each appropriate directory. Then, the code from heat_hazard.R can be used to compute heat index.
-# Finally, you can call aggregate.by.county.and.state from this file to combine all the results.
+# for each appropriate directory. Adjust column names appropriately, something like:
+# names(relhum) = c("LAT", "LON", names(tmax)[which(names(tmax)=="01012041"):which(names(tmax)=="12312060")])
+# Read in humidity and tamx:
+hum <- read.csv("humidity.csv", check.names = FALSE)
+hum <- hum[with(hum, order(LON, LAT)),]
+write.csv(hum, "sorted-hum.csv", row.names = FALSE)
+
+tm <- tmax[,c(1, 2, which(names(tmax)=="01012041"):which(names(tmax)=="12312060"))]
+tm <- tm[with(tm, order(LON, LAT)),]
+write.csv(tm, "sorted-tmax.csv", row.names = FALSE)
+
+# Next, call compute_heat on these two files to produce heat_index:
+# compute_heat sorted-hum.csv sorted-tmax.csv > heat_index.csv
+# Then, load the heat index and compute days above threshold (typically 3)
+hi <- read.csv(fn, check.names = FALSE)
+names(hi)[1:2] = c("LON", "LAT") # Names appear reversedx
+hi <- merge(grid[,1:3], hi)
+threshold <- 3
+high.days <- apply(hi[,3:ncol(hi)], 1, function(row) { sum(row >= threshold)})
+
+# Finally, you can call aggregate.by.county.and.state with this data combine all the results.
 
 
