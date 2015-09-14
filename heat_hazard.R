@@ -31,7 +31,7 @@ statepop <- read.csv("/media/eitan/My Book/statepop.csv")
 read_humidity <- function() {
   print ("Reading humidities...")
   hum <- read.csv("humidity.csv", check.names = FALSE)
-  names(hum)[3:7307] = str_pad(names(hum)[3:7307], 8, pad = "0")
+  names(hum)[3:ncol(hum)] = str_pad(names(hum)[3:ncol(hum)], 8, pad = "0")
   hum <- merge(hum, grid[,1:2])
   hum <- hum[with(hum, order(LON, LAT)),]
   print ("Done!")

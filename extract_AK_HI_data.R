@@ -6,6 +6,8 @@ library(Rcpp)
 library(dplyr)
 library(doParallel);
 
+registerDoParallel(cores = 50)
+
 netcdf.dir <- "/media/eitan/My Book/nex-gddp"
 output.dir <- "/fast/ak_hi"
 
@@ -358,7 +360,8 @@ compute.wildfire.by.state <- function(threshold = 600, start.date = "01011991", 
 
 yr <- c(1:365);
 lyr <- c(1:366);
-yrday <- c(yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr)
+#yrday <- c(yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr,yr,lyr,yr,yr)
+yrday <- c(yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr,yr)  # We'll ignore leap years here
 
 # Create all the INI input files to MTCLIM for AK/HI
 create.ini.files <- function() {
@@ -382,7 +385,7 @@ create.ini.files <- function() {
           cat("", file = fname, sep = "\n", append = TRUE)
           cat("CONTROL", file = fname, sep = "\n", append = TRUE)
           cat("2", file = fname, sep = "\n", append = TRUE)
-          cat("7305", file = fname, sep = "\n", append = TRUE)
+          cat(length(yrday), file = fname, sep = "\n", append = TRUE)
           cat("0", file = fname, sep = "\n", append = TRUE)
           cat("1", file = fname, sep = "\n", append = TRUE)
           cat("1", file = fname, sep = "\n", append = TRUE)
@@ -435,6 +438,10 @@ create.dat.files <- function() {
           cat("\t\t\t", "(deg C)", "(deg C)", "(cm)", "\n", file= fname, sep="\t\t", append = TRUE)
           mintemp <- as.numeric(tmin[i, start:end]);
           maxtemp <- as.numeric(tmax[i, start:end]);
+          indices <- maxtemp < mintemp
+          swap <- mintemp
+          mintemp[indices] <- maxtemp[indices]
+          maxtemp[indices] <- swap[indices]
           pr <- as.numeric(precip[i, start:end]);
           labels <- colnames(tmax)[start:end];
           year <- as.numeric(substr(labels, 5, 8));
