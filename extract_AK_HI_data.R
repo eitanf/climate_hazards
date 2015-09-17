@@ -342,6 +342,7 @@ compute.wildfire.by.state <- function(threshold = 600, start.date = "01011991", 
     load(paste0(output.dir, "/wildfire/kbdi.", model, ".RData"))
     start <- which(names(kbdi) == start.date)
     end <- which(names(kbdi) == end.date)
+    print(paste("Computing data for model", model, "at time:", Sys.time()))
     high.days <- apply(kbdi[,start:end], 1, function(row) { sum(row >= threshold)} / 20)
     annual.high.kbdi <- cbind(annual.high.kbdi, high.days)
   }
@@ -351,7 +352,7 @@ compute.wildfire.by.state <- function(threshold = 600, start.date = "01011991", 
   countypop <- data.frame(pop = pop$POP2010, row.names = pop$GEOID)
   aggregated <- aggregate.by.county.and.state(annual.high.kbdi[,c(3,5:ncol(annual.high.kbdi))], countypop)
 
-  outname <- paste0(output.dir, "wildfire/aggregated-kbdi-over", threshold, substr(start.date, 5, 8), substr(end.date, 5, 8))
+  outname <- paste0(output.dir, "/wildfire/aggregated-kbdi-over-", threshold, ".", substr(start.date, 5, 8), ".csv")
   write.csv(aggregated, outname, row.names = FALSE)
 }
 
@@ -458,6 +459,8 @@ create.dat.files <- function() {
 # for each appropriate directory. Adjust column names appropriately, something like:
 # names(relhum) = c("LAT", "LON", names(tmax)[which(names(tmax)=="01012041"):which(names(tmax)=="12312060")])
 # Read in humidity and tamx:
+example <- '
+setwd("/fast/ak_hi/danger_days/mtclimata/ACCESS1-0/2041")  # Just for example
 hum <- read.csv("humidity.csv", check.names = FALSE)
 hum <- hum[with(hum, order(LON, LAT)),]
 write.csv(hum, "sorted-hum.csv", row.names = FALSE)
@@ -465,16 +468,16 @@ write.csv(hum, "sorted-hum.csv", row.names = FALSE)
 tm <- tmax[,c(1, 2, which(names(tmax)=="01012041"):which(names(tmax)=="12312060"))]
 tm <- tm[with(tm, order(LON, LAT)),]
 write.csv(tm, "sorted-tmax.csv", row.names = FALSE)
-
+'
 # Next, call compute_heat on these two files to produce heat_index:
 # compute_heat sorted-hum.csv sorted-tmax.csv > heat_index.csv
 # Then, load the heat index and compute days above threshold (typically 3)
+example <- '
 hi <- read.csv(fn, check.names = FALSE)
 names(hi)[1:2] = c("LON", "LAT") # Names appear reversedx
 hi <- merge(grid[,1:3], hi)
 threshold <- 3
 high.days <- apply(hi[,3:ncol(hi)], 1, function(row) { sum(row >= threshold)})
-
+'
 # Finally, you can call aggregate.by.county.and.state with this data combine all the results.
-
 
